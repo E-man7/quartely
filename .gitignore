@@ -1,0 +1,11 @@
+config/credentials.yaml
+data/cache/
+logs/
+results/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+models/
+trading_halted.lock
+.env

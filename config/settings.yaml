@@ -1,0 +1,175 @@
+# Quartely-trader configuration
+# All tunable parameters live here. Credentials go in credentials.yaml (never commit it).
+
+universe:
+  # Asset whose regime is modelled (the "signal" asset)
+  signal_symbol: SPY
+  # Risk asset that receives the regime-driven allocation
+  risk_symbol: SPY
+  # Defensive asset that receives the remainder (set to null to hold cash)
+  safe_symbol: SHY
+
+data:
+  source: alpaca            # alpaca | yfinance | csv
+  csv_dir: data/cache       # used when source == csv, and for caching
+  timeframe: 1Day
+  feed: sip                 # historical bars: sip (full volume) | iex
+  live_feed: iex            # latest trades/quotes and websocket streams; free plans need iex
+  quote_max_age_seconds: 5  # a streamed quote older than this is refreshed over REST
+  history_years: 15         # how much history to pull for training / backtests
+  cache: true
+
+features:
+  # Raw observables (see data/feature_engineering.py); every HMM input is a
+  # rolling z-score over `zscore_window` bars, so standardization is causal.
+  return_horizons: [1, 5, 20]   # log returns
+  vol_windows: [5, 20]          # realized vol (annualized)
+  vol_ratio_windows: [5, 20]    # short / long realized vol
+  volume_window: 50             # volume z-score lookback
+  volume_trend_window: 10       # slope of volume SMA
+  adx_window: 14
+  trend_sma: 50                 # slope of this SMA
+  rsi_window: 14
+  long_sma: 200                 # distance from this SMA, % of price
+  roc_windows: [10, 20]
+  atr_window: 14                # normalized ATR = ATR / close
+  zscore_window: 252
+  # Columns fed to the HMM
+  hmm_features: [z_ret_1, z_ret_5, z_ret_20, z_rvol_20, z_vol_ratio, z_volume_norm, z_volume_trend,
+                 z_adx_14, z_sma50_slope, z_rsi_14, z_dist_sma200, z_roc_10, z_roc_20, z_natr_14]
+
+hmm:
+  n_states_candidates: [3, 4, 5, 6, 7]   # model selection via BIC (lowest wins)
+  covariance_type: full            # full | diag | spherical | tied
+  n_iter: 200
+  tol: 1.0e-4
+  n_init: 10                       # random restarts per candidate; best log-likelihood wins
+  train_window: null               # null = expanding window; or a bar count for a rolling window
+  min_train_size: 504              # bars required before the first fit (~2 years)
+  retrain_every: 21                # bars between refits (walk-forward / live)
+  model_selection_every: 252       # bars between full BIC re-selection; refits in between warm-start
+  random_state: 42
+  model_dir: models                # live/regimes refits are pickled here with metadata; null = don't save
+  stability:
+    confirm_bars: 3                # a regime change counts only after persisting this many bars
+    flicker_window: 20             # bars over which filtered-argmax switches are counted
+    flicker_threshold: 4           # more switches than this per window -> uncertainty mode
+
+strategy:
+  # Allocation follows each regime's volatility rank (labels are ignored):
+  #   lowest third  -> LowVolBull:       95% at 1.25x
+  #   middle third  -> MidVolCautious:   95% if price > 50 EMA, else 60%
+  #   highest third -> HighVolDefensive: 60% (always long, never short)
+  # Below this regime probability (or while flickering): size halved, leverage 1.0x
+  min_confidence: 0.55
+  uncertainty_size_mult: 0.5
+  transition_size_mult: 0.75       # confirmed-regime change pending (-25%)
+  indicator_lookback: 250          # bars used for 50 EMA / ATR(14)
+  rebalance_frequency: daily       # daily | weekly | monthly | quarterly
+  rebalance_threshold: 0.10        # trade only if |target - current| weight > this
+
+risk:
+  # Independent of the HMM, with veto power over every signal and order.
+  # Limits are sized for this strategy: ONE ETF held at 60-119% of equity, with
+  # the remainder in the defensive sleeve (cash equivalent, exempt from limits).
+  # Multi-stock values from the Phase 5 spec are noted as "spec:".
+  max_total_exposure: 1.25         # spec: 0.80 (20% cash minimum)
+  max_single_position: 1.25        # spec: 0.15
+  max_sector_exposure: 1.25        # spec: 0.30
+  sectors: {SPY: us_equity_broad}  # symbol -> sector for the correlated-exposure cap (default: own sector)
+  max_concurrent_positions: 5
+  max_daily_trades: 20
+  max_portfolio_leverage: 1.25
+  default_leverage: 1.0            # only low-vol regimes may lever, up to max_portfolio_leverage
+  leverage_max_positions: 3        # force 1.0x once this many positions are open
+  # Position level: size = equity * max_risk_per_trade / |entry - stop|, capped by the
+  # strategy's regime size, the overnight gap rule and the limits above.
+  max_risk_per_trade: 0.05         # spec: 0.01
+  min_position_value: 100
+  gap_multiple: 3.0                # overnight positions assume a 3x stop-distance gap-through...
+  max_overnight_gap_loss: 0.15     # ...costing at most this fraction of equity (spec: 0.02)
+  correlation_window: 60
+  correlation_reduce: 0.70         # size x0.5 above this 60-day correlation with a held position
+  correlation_reject: 0.85
+  max_spread_pct: 0.005            # order validation: reject if (ask - bid) / mid exceeds this
+  duplicate_window_seconds: 60
+  lock_file: trading_halted.lock   # written by the peak breaker; delete by hand to resume
+  breakers:                        # fire on actual P&L (equity), never on the regime model
+    daily_reduce_dd: 0.02          # sizes x size_mult for the rest of the day
+    daily_halt_dd: 0.03            # close all, halt for the rest of the day
+    weekly_reduce_dd: 0.05         # sizes x size_mult for the rest of the week
+    weekly_halt_dd: 0.07           # close all, halt for the rest of the week
+    peak_halt_dd: 0.10             # close all, halt, write lock_file
+    size_mult: 0.5
+
+broker:
+  # Keys: ALPACA_API_KEY / ALPACA_SECRET_KEY in .env (see .env.example), never in this file.
+  paper_trading: true              # https://paper-api.alpaca.markets; false = https://api.alpaca.markets
+                                   # (asks you to type a confirmation at the terminal)
+  order_type: limit                # limit | market
+  limit_offset_pct: 0.001          # limit = price +/- 0.1%
+  fill_timeout_seconds: 30         # cancel an unfilled limit order after this...
+  retry_at_market: true            # ...and send the remainder at market
+  time_in_force: day
+  min_order_notional: 10.0
+  fractional: false                # bracket orders and GTC stops need whole shares
+  protective_stops: true           # keep a GTC stop-sell on the risk position (backtests don't simulate this)
+  dry_run: false                   # log orders but never send them
+  max_retries: 3                   # REST calls: exponential backoff, reconnect on connection errors
+  backoff_base_seconds: 1.0
+  backoff_max_seconds: 30.0
+
+execution:
+  timezone: America/New_York
+  bar_timeframe: 5Min              # main-loop bar: breakers, trailing stops, health, dashboard
+  signal_timeframe: 1Day           # bars the HMM/strategy run on. 1Day = as backtested (decides once a
+                                   # day at run_time on completed daily bars). 5Min = intraday HMM (untested)
+  run_time: "15:45"                # daily signals: first bar at/after this time (US/Eastern)
+  when_closed: wait                # at startup with the market closed: wait | exit
+  max_model_age_days: 7            # load the saved HMM if younger, else retrain; also the weekly retrain
+  feed_timeout_bars: 3             # no bar for this many bar intervals while open: feed down, signals paused
+  state_file: logs/state_snapshot.json   # session recovery snapshot
+
+monitoring:
+  log_dir: logs                    # main.log, trades.log, alerts.log, regime.log
+  log_level: INFO
+  json_logs: true
+  log_max_bytes: 10000000          # rotate each log at 10 MB...
+  log_retention_days: 30           # ...and delete rotated files after 30 days
+  status_file: logs/status.json    # written every bar; read by `python main.py --dashboard`
+  dashboard_refresh_seconds: 5
+  alerts:
+    console: true
+    email_enabled: false
+    webhook_enabled: false
+    rate_limit_minutes: 15         # at most one alert per event type per window
+    large_pnl_pct: 0.02            # alert when |daily P&L| reaches this
+    on: [regime_change, circuit_breaker, large_pnl, data_feed_down, api_lost, hmm_retrained,
+         flicker_exceeded, order_rejected, error]
+
+backtest:
+  start: "2010-01-01"              # first out-of-sample date (training data comes before it)
+  end: null                        # null = today
+  initial_capital: 100000
+  walk_forward:
+    in_sample: 252                 # bars of HMM training (BIC selection) per window
+    out_of_sample: 126             # bars traded with each window's model
+    step: 126
+  fill_delay: 1                    # signal at bar N close -> fill at bar N+1 open
+  slippage_pct: 0.0005             # 0.05% of price on every fill
+  commission_per_order: 0.0        # Alpaca is commission-free
+  cash_rate: 0.02                  # annual yield on positive cash
+  margin_rate: 0.06                # annual rate on margin debt (negative cash); set to your broker's rate
+  random_seeds: 100                # random-allocation benchmark runs (--compare)
+  lock_cooldown_bars: 21           # backtests only: bars flat after a peak-drawdown lock (simulated manual review)
+
+stress_test:
+  n_simulations: 100               # crash and gap Monte Carlo runs
+  crash:
+    shocks_per_sim: 10
+    size_range: [-0.15, -0.05]     # single-day gap size
+  gap:
+    atr_multiples: [2, 5]          # overnight gap = -U(2, 5) x ATR(14), one per simulation
+  misclassification:
+    n_simulations: 20              # runs with shuffled regime ids
+  random_state: 7
