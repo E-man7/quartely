@@ -7,6 +7,7 @@
     python main.py --stress-test         # backtest + crash / gap / misclassification stress tests
     python main.py --train-only          # train the HMM on the latest data, save it, exit
     python main.py --dashboard           # attach a dashboard to a running instance
+    python main.py --web-dashboard       # same, in the browser at http://127.0.0.1:8050
     python main.py regimes               # today's regime and signal (no trading)
 
 `python main.py backtest --symbols SPY ...` (subcommand form) also works.
@@ -119,6 +120,15 @@ def cmd_dashboard(settings: Dict, creds: Dict, args) -> None:
     run_viewer(PROJECT_ROOT / mon.get("status_file", "logs/status.json"), mon.get("dashboard_refresh_seconds", 5))
 
 
+def cmd_web_dashboard(settings: Dict, creds: Dict, args) -> None:
+    from monitoring.web_dashboard import serve
+
+    mon = settings.get("monitoring", {})
+    web = mon.get("web_dashboard", {})
+    serve(PROJECT_ROOT / mon.get("status_file", "logs/status.json"), host=args.host or web.get("host", "127.0.0.1"),
+          port=args.port or web.get("port", 8050), refresh_seconds=mon.get("dashboard_refresh_seconds", 5))
+
+
 def cmd_live(settings: Dict, creds: Dict, args) -> None:
     from core.trading_system import TradingSystem
 
@@ -161,6 +171,10 @@ def main(argv=None) -> int:
     mode.add_argument("--stress-test", action="store_true", help="run stress tests (implies --backtest)")
     mode.add_argument("--compare", action="store_true", help="benchmark comparisons (implies --backtest)")
     mode.add_argument("--dashboard", action="store_true", help="show the dashboard of a running instance")
+    mode.add_argument("--web-dashboard", action="store_true", help="serve the dashboard on localhost")
+    web = parser.add_argument_group("web dashboard options")
+    web.add_argument("--port", type=int, help="web dashboard port (default 8050)")
+    web.add_argument("--host", help="web dashboard bind address (default 127.0.0.1, local only)")
     bt = parser.add_argument_group("backtest options")
     bt.add_argument("--symbols", nargs="+", help="symbols to backtest independently (default: universe.risk_symbol)")
     bt.add_argument("--start", help="first out-of-sample date (YYYY-MM-DD)")
@@ -178,6 +192,8 @@ def main(argv=None) -> int:
 
     if args.dashboard:
         cmd_dashboard(settings, creds, args)
+    elif args.web_dashboard:
+        cmd_web_dashboard(settings, creds, args)
     elif args.train_only:
         cmd_train(settings, creds, args)
     elif args.command == "backtest" or args.backtest or args.stress_test or args.compare:

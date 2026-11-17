@@ -1,0 +1,137 @@
+# Quarterly Theory strategies on the index triad (python -m quarterly ...).
+# A separate strategy from the HMM allocation bot. Both use the same Alpaca
+# account: run ONE of them at a time.
+# Keys come from .env only. Paper unless the environment has LIVE_TRADING=true.
+
+# Active: nyopen (NY open v2, 09:30) and silverbullet (03:00 / 10:00 / 14:00), run together by one bot.
+# Each has its own order prefix (qtny / qtsb) and trade limits; an index holds one position at a time,
+# and on the same index and minute the first listed wins. triad930 and q3 are dormant.
+strategies: [nyopen, silverbullet]
+
+# --- nyopen ---------------------------------------------------------------
+# At exactly 09:30 NY (daylight saving handled): an index above both its 00:00
+# and 07:30 opens with a bearish SMT across QQQ / DIA / SPY is a sell setup,
+# below both with a bullish SMT a buy setup. Of the setups, the one with the
+# most momentum trades, targeting the 07:30 one-minute candle's low (sells) /
+# high (buys). If another index with a setup reaches its own target first,
+# the trade opts out at market. Stop: the day high/low. One trade a day.
+nyopen:
+  entry_times: ["09:30"]          # 09:45 dropped: 41% win rate, -$2,086 in the Jan-Oct backtest
+  smt_from: "07:30"              # 07:30 | 00:00
+  momentum_bars: 3               # % change over the last 3 one-minute closes
+  require_mss: false             # also require a market structure shift since smt_from
+  stop_buffer: 0.0               # $ beyond the day high/low
+  min_rr: 0.0                    # minimum reward:risk, 0 = off
+  target_rr: 0.0                 # 0 = the candle level in `target` (a fixed 1:3 lost money here over Jan-Nov 2026)
+  opt_out: true
+  # When another index counts as having taken out its own open (blocks the entry / triggers the opt out):
+  #   beyond:      its latest bar is at/through its target open, on either side (Pine v2; in effect all
+  #                three must be on the same side of their opens). Jan-Nov 2: 70 trades, 54%, PF 1.72, +$8.9k
+  #   crossed:     same-side index that came back to its open since 07:30. 9 trades, +$4.8k
+  #   after_entry: same-side index coming back to its open after entry (opt out only). 113 trades, 52%, PF 1.2, +$4.8k
+  other_open_rule: first_to_target
+  pick: momentum                 # first_to_target: trade the setup with the most momentum
+  target: 0730_candle            # sells: the 07:30 one-minute candle's low; buys: its high (nearer_open: the opens)
+                                 # 0830_candle tested Nov 2025-Nov 2026: 48.1% win, +$891 vs 51.9%, +$6,125 here
+  wait_for_all_bars: false       # judge on the bar closing at exactly 09:30
+  flat_at: "15:55"               # close open trades at this time (null: hold)
+
+# --- triad930 -------------------------------------------------------------
+# A leader (another member of the group) takes exactly one side of its 8am
+# range and trades beyond its True Day Open; sell (high taken) / buy (low taken)
+# the member that has not taken its range inside the 9:30 window.
+triad930:
+  range_start: "08:00"           # 8am range: bars opening 08:00-08:59
+  range_end: "09:00"
+  window_start: "09:30"          # signals on bars opening 09:30-09:32 (set window_end "09:35" for 5 minutes)
+  window_end: "09:33"
+  sweep_in_window: false         # true: the leader's sweep must itself happen inside the window
+  strict_lag: true               # traded asset must have taken NEITHER side of its 8am range (false: not the same side)
+  need_premium: false            # traded asset also above its TDO for sells / below for buys
+  allow_shorts: true
+  allow_longs: true
+  stop_mode: day                 # day: day high/low since 00:00 | window: window high/low
+  stop_buffer: 0.05              # $ beyond the stop level (5 ticks)
+  flat_at: "15:55"               # close open trades at this time
+  pick: tightest_stop            # several indices signal together: trade only the one with the tightest stop
+                                 # (% of price), one triad trade per day | widest_stop | all
+
+# --- shared ---------------------------------------------------------------
+# rr, risk_pct, max_trades_per_symbol_per_day, time_in_force, the TDO settings
+# and the data feeds apply to both strategies.
+
+# --- q3 (dormant) ---------------------------------------------------------
+session_start_hour: 7            # NY session start, 6 or 7. Session = 6h = four 90-minute quarters.
+                                 # Entry window = Q3 start + 45 min, lasting 22.5 min (10:45:00-11:07:30 at 7).
+
+# Each symbol trades on its own signals. groups: every member is the partner of
+# every other member (triad930: the possible leaders; q3: SMT partners, SMT set
+# when ANY partner diverges, i.e. exactly one of the two makes a new session high/low).
+groups:
+  - {symbols: [QQQ, DIA, SPY], enabled: true}    # Nasdaq 100 / Dow 30 (US30) / S&P 500 proxies
+
+# pairs: one partner each. inverse: compare the partner's lows with the symbol's highs (and vice versa).
+pairs:
+  - {symbol: GLD, partner: SLV, inverse: false, enabled: false}   # gold <-> silver (disabled: indices only)
+  # EURUSD <-> GBPUSD proxies. Disabled: on the IEX feed FXE/FXB have almost no
+  # minute bars (0 of 23 in a sample entry window), no overnight bars for the TDO,
+  # and neither is shortable. Consider enabling only with SIP data.
+  - {symbol: FXE, partner: FXB, inverse: false, enabled: false}
+
+tdo_fallback: last_close_before_midnight  # no bar 00:00-00:30 NY (DIA on ~45% of days): the True Day Open is the
+                                 # last trade before 00:00 (after 20:00) | skip_day | first_premarket_bar
+tdo_search_minutes: 30           # how long after midnight a bar still counts as the True Day Open
+premarket_start: "04:00"         # first_premarket_bar uses the first bar at/after this time
+
+smt_from: session_q3             # q3 only: session_start | session_q3 | window_start
+pivot_len: 2                     # q3 only: swing pivots: bars on each side; confirmed after the right side closes
+
+rr: 3.0                          # target = entry +/- rr x risk (e.g. 3 or 4)
+risk_pct: 1.0                    # percent of equity risked per trade
+stop_buffer: 0.0                 # q3 only: $ beyond the day high (shorts) / day low (longs)
+max_leverage: 4.0                # position value <= this x equity, and never above the account's buying power
+max_trades_per_symbol_per_day: 1
+flat_at_session_end: false       # q3 only: close open strategy positions at session end (start + 6h)
+time_in_force: gtc               # bracket legs survive the close (protected overnight)
+
+data:
+  # The True Day Open needs bars from 00:00 NY, which only Alpaca's overnight
+  # (boats) feed has. IEX covers the rest of the day on the free plan; recent
+  # SIP data needs a paid subscription.
+  overnight_feed: boats          # used 20:00-04:00 NY
+  day_feed: iex                  # used 04:00-20:00 NY: iex | sip
+  overnight_start: "20:00"
+  overnight_end: "04:00"
+  # IEX has almost no premarket bars (the 8am range: ~1 of 60 minutes for DIA), so
+  # 04:00-09:30 comes from SIP, which the free plan serves once 15 minutes old.
+  # The latest minutes use IEX until the SIP bars arrive (the live loop replays the
+  # day when they do). Empty to use day_feed for the premarket too.
+  premarket_feed: sip
+  premarket_end: "09:30"
+  backtest_day_feed: iex         # same as live by default; sip works for history older than 15 min
+  # The free plan refuses the most recent ~15 minutes of these feeds, so live requests to them
+  # stop this many minutes before now. The overnight bars (TDO, day range) are hours old by the
+  # entry window, so nothing the strategy needs is lost. Empty this list on a paid data plan.
+  delayed_feeds: [boats, sip]
+  recent_delay_minutes: 16
+  # Bad prints: a bar's high/low further than this % beyond its open/close is clipped to it
+  # (a stray 724.66 print on a 713.5 QQQ bar on 2026-10-22 set a false 8am high). 0 disables.
+  max_wick_pct: 0.75
+
+loop_delay_seconds: 5            # wake this long after each minute closes
+dry_run: false                   # log orders instead of sending them (also: DRY_RUN=true env)
+results_dir: results/quarterly
+
+# Silver bullet models (strategy: silverbullet), dormant unless selected above. Times NY.
+silverbullet:
+  models: [reversal, continuation]
+  sessions: ["10:00", "14:00"]   # NY AM, NY PM. London (03:00) dropped from 2026-11-16
+  macros: [[20, 40], [50, 70]]   # entry windows, minutes past the hour: 10:20-10:40, 10:50-11:10
+  require_smt: true
+  fvg_minutes: 5                 # continuation PDA timeframe in C2 (5 or 15)
+  stop_buffer: 0.0
+  min_rr: 1.0                    # setup filter, on the C1/C2 target
+  target_rr: 3.0                 # fixed 1:3 order target from 2026-11-16 (0 = the C1/C2 extreme)
+  max_trades_per_day: 3
+  max_trades_per_session: 1
+  flat_at: "15:55"

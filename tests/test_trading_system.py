@@ -77,6 +77,9 @@ def test_startup_sequence(started, live_settings, tmp_path, caplog):
     assert list((tmp_path / "models").glob("hmm_*.pkl"))                    # trained and saved
     assert any(e == "hmm_retrained" for e, _ in system.alerts.sent)
     assert system.sig.risk.breaker.equity == pytest.approx(system.tracker.equity)
+    from monitoring.logger import get_context
+
+    assert get_context()["equity"] == pytest.approx(100_000) and get_context()["positions"] == {}
     status = json.loads((tmp_path / "status.json").read_text())
     assert status["system"]["mode"] == "PAPER" and status["portfolio"]["equity"] == pytest.approx(100_000)
 
@@ -237,11 +240,11 @@ def test_timeframe_minutes():
     ([], "cmd_live"), (["--dry-run"], "cmd_live"), (["--backtest"], "cmd_backtest"),
     (["backtest", "--symbols", "SPY"], "cmd_backtest"), (["--compare"], "cmd_backtest"),
     (["--stress-test"], "cmd_backtest"), (["--train-only"], "cmd_train"), (["--dashboard"], "cmd_dashboard"),
-    (["regimes"], "cmd_regimes"),
+    (["regimes"], "cmd_regimes"), (["--web-dashboard", "--port", "9000"], "cmd_web_dashboard"),
 ])
 def test_cli_routing(monkeypatch, argv, expected):
     called = []
-    for name in ("cmd_live", "cmd_backtest", "cmd_train", "cmd_dashboard", "cmd_regimes"):
+    for name in ("cmd_live", "cmd_backtest", "cmd_train", "cmd_dashboard", "cmd_regimes", "cmd_web_dashboard"):
         monkeypatch.setattr(main_mod, name, lambda s, c, a, name=name: called.append(name))
     monkeypatch.setattr(main_mod, "setup_logging", lambda *a, **k: None)
     main_mod.main(argv)

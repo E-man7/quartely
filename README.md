@@ -30,6 +30,7 @@ python main.py regimes                  # today's regime and signal, no trading
 python main.py --dry-run                # full live loop, no orders sent
 python main.py                          # live loop on the paper account (Ctrl-C to stop)
 python main.py --dashboard              # in another terminal: attach to the running instance
+python main.py --web-dashboard          # or in the browser: http://127.0.0.1:8050 (local only)
 pytest tests/                           # offline tests (synthetic data, fake broker)
 ```
 
@@ -86,3 +87,56 @@ Backtest output (default `results/`): `equity_curve.csv`, `trade_log.csv`
 
 This is research software, not investment advice. Backtest results do not
 guarantee future performance.
+
+## Second strategy: Quarterly Theory on the index triad
+
+A separate intraday strategy in `quarterly/` (config: `config/quarterly.yaml`).
+It shares the Alpaca account with the HMM bot, so **run only one of them at a
+time**. `strategy:` in the config picks the model; the other stays dormant.
+
+**`triad930` (active): 9:30 manipulation** on QQQ / DIA / SPY (Nasdaq 100, Dow 30,
+S&P 500), a port of the Pine Script "QT Triad 9:30 Manipulation":
+
+- Per asset: True Day Open (00:00 NY bar, via Alpaca's overnight `boats` feed),
+  the 8am range (08:00–09:00 high/low), day high/low from midnight.
+- A *leader* takes exactly one side of its 8am range and trades beyond its TDO
+  (8am high taken and above the TDO = bearish; 8am low taken and below the TDO =
+  bullish). A leader that took both sides is no leader.
+- In the 9:30–9:33 window, sell (bearish leader) or buy (bullish leader) every
+  other member that still has not taken its 8am range (`strict_lag`).
+- Stop at the day high/low (or window high/low) + 5 cents, target RR × risk,
+  one trade per symbol per day, open trades closed at 15:55. Orders are tagged
+  `qt930-…`.
+- Options in `triad930:`: window length, `sweep_in_window`, `strict_lag`,
+  `need_premium`, long/short switches, `stop_mode`, `stop_buffer`, `flat_at`.
+
+**`q3` (dormant): "Q3 of Q3"**, entries only in the third quarter of Q3
+(10:45:00–11:07:30 NY at session start 7), bias from TDO and NY Session True
+Open, SMT divergence across the triad, market structure shift on confirmed
+swing pivots. Enable with `strategy: q3` or `--strategy q3`.
+
+Both use bracket orders (market entry + stop + target), whole shares, GTC legs,
+1% risk per trade, and skip symbols that can't be shorted.
+
+```bash
+scripts/run_quarterly.sh                    # paper, kept awake (caffeinate), restarted after a crash
+kill $(cat logs/quarterly_runner.pid)       # stop it cleanly
+python -m quarterly live --dry-run          # full pipeline, orders only logged
+python -m quarterly live                    # paper account
+LIVE_TRADING=true python -m quarterly live  # real money (asks for a typed confirmation)
+python -m quarterly backtest --start 2026-01-02 --end 2026-10-20 [--rr 4] [--feed sip] [--strategy q3]
+python -m quarterly coverage --start 2026-10-01 --end 2026-10-20   # data coverage per symbol
+python -m quarterly chart --trades results/quarterly/trades_<tag>.csv   # rebuild a trade chart page
+```
+
+Each backtest also writes `results/quarterly/chart_<tag>.html`: open it in a
+browser to step through every trade on 1-minute candles (symbol + the leader or
+SMT partner) with entry, stop, target, exit, True Day Open, the 8am range (triad)
+or session open / SMT / pivot (q3) and the entry window marked. Needs internet for the chart library (lightweight-charts).
+
+Safeguards: bad prints (a bar's high/low more than `max_wick_pct` beyond its
+open/close) are clipped; a backup stop closes a position at market if a bar
+closes beyond its bracket stop and the broker's stop leg has not filled.
+
+Decisions and their reasons are logged to `logs/quarterly.log`; backtest trades
+and reports go to `results/quarterly/`.

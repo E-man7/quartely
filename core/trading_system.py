@@ -192,6 +192,7 @@ class TradingSystem:
                                      day_start=self.tracker.account.get("last_equity"))
         self.handle_breaker_events(events)
         self.tracker.on_breaker.append(self.handle_breaker_events)
+        self.update_context()                     # equity / positions on every entry from here on
 
         self.init_hmm()
         self.start_feeds()

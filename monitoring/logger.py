@@ -2,9 +2,10 @@
 
 Files (in `monitoring.log_dir`), each rotated at 10 MB with backups kept 30 days:
     main.log    everything
-    trades.log  orders, fills, positions (broker.*)
+    trades.log  orders, fills, positions (order executor, position tracker)
     alerts.log  alerts (monitoring.alerts)
     regime.log  regime detection and strategy mapping
+    quarterly.log  the Quarterly Theory strategy (decisions, orders)
 
 Every JSON entry carries the shared trading context (regime, probability,
 equity, positions, daily_pnl) set by the main loop with `set_context(...)`.
@@ -30,9 +31,10 @@ _context: Dict[str, Any] = {k: None for k in CONTEXT_FIELDS}
 _context_lock = threading.Lock()
 
 CHANNELS: Dict[str, Sequence[str]] = {
-    "trades.log": ("broker",),
+    "trades.log": ("broker.order_executor", "broker.position_tracker"),
     "alerts.log": ("monitoring.alerts",),
     "regime.log": ("core.hmm_engine", "core.regime_strategies"),
+    "quarterly.log": ("quarterly",),
 }
 
 

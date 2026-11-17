@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quarterly Backtest Dashboard</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --ink: #1b1f24; --muted: #667085; --line: #e4e7ec; --hover: #f0f3f7;
+    --good: #12805c; --bad: #c0362c; --info: #2f6fdb; --warn: #b7791f; --sel: #e8f0fd; --chip: #eef1f5;
+    --good-a: rgba(18,128,92,.12); --bad-a: rgba(192,54,44,.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --card: #171b21; --ink: #e6e9ee; --muted: #8b95a5; --line: #262c35; --hover: #1d232b;
+      --good: #3ccf91; --bad: #f2685c; --info: #6ea2ff; --warn: #f0b44c; --sel: #142036; --chip: #20262f;
+      --good-a: rgba(60,207,145,.14); --bad-a: rgba(242,104,92,.16);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); display: flex; flex-direction: column;
+         font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .num { font-variant-numeric: tabular-nums; }
+  header { padding: 10px 20px; background: var(--card); border-bottom: 1px solid var(--line);
+           display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 650; }
+  .stat { color: var(--muted); } .stat b { color: var(--ink); font-weight: 600; }
+  .tabs { display: inline-flex; background: var(--chip); border-radius: 9px; padding: 3px; gap: 2px; margin-left: auto; }
+  .tabs button { border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 600;
+                 padding: 6px 14px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+  .tabs button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .tabs button kbd { font: 11px ui-monospace, monospace; color: var(--muted); margin-left: 6px; }
+  .layout { flex: 1; display: grid; grid-template-columns: 330px 1fr; min-height: 0; }
+  aside { border-right: 1px solid var(--line); background: var(--card); display: flex; flex-direction: column; min-height: 0; }
+  .filters { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  select { background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 5px 6px; font: inherit; min-width: 0; }
+  .count { padding: 6px 12px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--line); }
+  .list { overflow-y: auto; flex: 1; }
+  table { width: 100%; border-collapse: collapse; }
+  th { position: sticky; top: 0; background: var(--card); text-align: left; font-size: 11px; color: var(--muted);
+       font-weight: 600; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td.r, th.r { text-align: right; }
+  .list tbody tr { cursor: pointer; } .list tbody tr:hover { background: var(--hover); }
+  .list tbody tr.sel { background: var(--sel); }
+  .pos { color: var(--good); } .neg { color: var(--bad); }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px 16px; gap: 10px; }
+  .details { display: flex; flex-wrap: wrap; gap: 4px 20px; background: var(--card); border: 1px solid var(--line);
+             border-radius: 10px; padding: 9px 14px; }
+  .details div { color: var(--muted); } .details b { color: var(--ink); font-weight: 600; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 650; }
+  .b-long { color: var(--good); border: 1px solid var(--good); } .b-short { color: var(--bad); border: 1px solid var(--bad); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  .group { display: inline-flex; gap: 4px; align-items: center; }
+  .group > span { color: var(--muted); font-size: 12px; margin-right: 2px; }
+  .chip { border: 1px solid var(--line); background: var(--card); color: var(--muted); font: inherit; font-size: 12px;
+          padding: 3px 9px; border-radius: 999px; cursor: pointer; }
+  .chip.on { color: var(--ink); border-color: var(--info); background: var(--sel); }
+  .readout { margin-left: auto; color: var(--muted); font-size: 12px; }
+  .readout b { color: var(--ink); font-weight: 600; }
+  .view { flex: 1; min-height: 0; display: none; }
+  .view.on { display: flex; flex-direction: column; gap: 10px; }
+  .chart-wrap { flex: 1; background: var(--card); border: 1px solid var(--line); border-radius: 10px; position: relative; min-height: 300px; }
+  .chart-wrap .label { position: absolute; top: 8px; left: 12px; z-index: 2; font-weight: 650; pointer-events: none; }
+  .chart { position: absolute; inset: 0; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; }
+  .sw { display: inline-block; width: 16px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+  #perf { overflow-y: auto; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .kpi .k { color: var(--muted); font-size: 12px; } .kpi .v { font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .card h3 { margin: 0 0 8px; font-size: 12px; letter-spacing: .06em; color: var(--muted); font-weight: 650; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 1200px) { .grid2 { grid-template-columns: 1fr; } }
+  svg { display: block; width: 100%; }
+  svg .pt { cursor: pointer; }
+  .tip { position: fixed; pointer-events: none; background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+         padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.18); display: none; z-index: 10; }
+  .breakdowns { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+  .breakdowns table td, .breakdowns table th { padding: 4px 6px; }
+  .bar { height: 6px; border-radius: 3px; display: inline-block; vertical-align: middle; }
+  #error { display: none; margin: 16px 20px 0; padding: 10px 14px; border-radius: 8px; color: var(--bad); border: 1px solid var(--bad); }
+  .hint { color: var(--muted); font-size: 12px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } aside { max-height: 38vh; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Quarterly backtest</h1>
+  <span id="summary"></span>
+  <div class="tabs" role="tablist">
+    <button id="tab-trade" role="tab" data-tab="trade">Trade chart<kbd>1</kbd></button>
+    <button id="tab-partner" role="tab" data-tab="partner"><span id="partner-tab-label">Partner chart</span><kbd>2</kbd></button>
+    <button id="tab-perf" role="tab" data-tab="perf">Performance<kbd>3</kbd></button>
+  </div>
+</header>
+<div id="error"></div>
+<div class="layout">
+  <aside>
+    <div class="filters">
+      <select id="f-symbol" aria-label="Symbol"></select>
+      <select id="f-outcome" aria-label="Outcome">
+        <option value="">All exits</option><option value="target">Targets</option>
+        <option value="stop">Stops</option><option value="other">Other</option>
+      </select>
+      <select id="f-side" aria-label="Side">
+        <option value="">Both sides</option><option value="LONG">Long</option><option value="SHORT">Short</option>
+      </select>
+    </div>
+    <div class="count" id="count"></div>
+    <div class="list"><table class="num">
+      <thead><tr><th>Signal (NY)</th><th>Sym</th><th>Side</th><th>Exit</th><th class="r">R</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+  </aside>
+  <main>
+    <div class="details num" id="details"></div>
+
+    <section class="view" id="chart-view">
+      <div class="toolbar">
+        <div class="group" id="layers"><span>Show</span></div>
+        <div class="group" id="zooms"><span>Zoom</span></div>
+        <div class="readout num" id="readout"></div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="chart-wrap"><div class="label" id="chart-label"></div><div class="chart" id="chart"></div></div>
+    </section>
+
+    <section class="view" id="perf">
+      <div class="kpis num" id="kpis"></div>
+      <div class="card"><h3>EQUITY CURVE (CUMULATIVE R) · DRAWDOWNS SHADED · CLICK A POINT TO OPEN THE TRADE</h3>
+        <svg id="equity" viewBox="0 0 1000 260" preserveAspectRatio="none" style="height:260px"></svg></div>
+      <div class="grid2">
+        <div class="card"><h3>R DISTRIBUTION</h3><svg id="hist" viewBox="0 0 500 200" style="height:200px"></svg></div>
+        <div class="card"><h3>CUMULATIVE R BY SYMBOL</h3><svg id="bysym" viewBox="0 0 500 200" style="height:200px"></svg></div>
+      </div>
+      <div class="breakdowns num" id="breakdowns"></div>
+    </section>
+  </main>
+</div>
+<div class="tip num" id="tip"></div>
+<script>
+const DATA = /*__DATA__*/null;
+const dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const C = { good: css("--good"), bad: css("--bad"), info: css("--info"), warn: css("--warn"), muted: css("--muted"),
+            line: css("--line"), tdo: "#9b59b6", so: "#e67e22", hl: dark ? "#8b95a5" : "#98a2b3",
+            series: ["#2f6fdb", "#12805c", "#e67e22", "#9b59b6", "#c0362c", "#0e9aa7"] };
+const $ = (id) => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const fmt = (x, d = 2) => x == null || isNaN(x) ? "—" : Number(x).toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
+const sgn = (x, d = 2) => x == null ? "—" : (x > 0 ? "+" : "") + fmt(x, d);
+const hhmm = (t) => new Date(t * 1000).toISOString().slice(11, 16);
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function fail(msg) { const e = $("error"); e.style.display = "block"; e.textContent = msg; }
+const LW = window.LightweightCharts;
+if (!LW) fail("The chart library (lightweight-charts, from unpkg.com) did not load: check your internet connection and reload. The Performance view still works.");
+if (!DATA) fail("No trade data embedded in this page.");
+
+// ------------------------------------------------------------------ state
+const S = { tab: "trade", visible: [], idx: -1, trade: null, chartShown: false,
+            layers: { levels: true, bracket: true, hilo: true, markers: true, window: true } };
+DATA.trades.forEach(t => { t.weekday = WEEKDAYS[new Date(t.day + "T12:00:00Z").getUTCDay()];
+  const m = Number(t.signal_label.slice(14, 16)); t.bucket = t.signal_label.slice(11, 14) + String(m - m % 5).padStart(2, "0"); });
+
+// ----------------------------------------------------------------- header
+$("title").textContent = DATA.title || "Quarterly backtest";
+const symbols = [...new Set(DATA.trades.map(t => t.symbol))].sort();
+[["", "All symbols"], ...symbols.map(s => [s, s])].forEach(([v, l]) => { const o = el("option", null, l); o.value = v; $("f-symbol").append(o); });
+
+// ------------------------------------------------------------------ chart
+let P = null;
+if (LW) {
+  const chart = LW.createChart($("chart"), {
+    autoSize: true,
+    layout: { background: { color: "transparent" }, textColor: C.muted, fontSize: 11 },
+    grid: { vertLines: { color: C.line }, horzLines: { color: C.line } },
+    timeScale: { timeVisible: true, secondsVisible: false, borderColor: C.line, rightOffset: 4 },
+    rightPriceScale: { borderColor: C.line }, crosshair: { mode: LW.CrosshairMode.Normal },
+  });
+  const band = chart.addHistogramSeries({ priceScaleId: "band", color: dark ? "rgba(110,162,255,.13)" : "rgba(47,111,219,.10)",
+                                          priceLineVisible: false, lastValueVisible: false });
+  chart.priceScale("band").applyOptions({ scaleMargins: { top: 0, bottom: 0 }, visible: false });
+  const candles = chart.addCandlestickSeries({ upColor: C.good, downColor: C.bad, borderVisible: false,
+                                               wickUpColor: C.good, wickDownColor: C.bad });
+  P = { chart, band, candles, lines: [], priceLines: [], bars: [] };
+  chart.subscribeCrosshairMove(param => {
+    const r = $("readout"); const d = param && param.seriesData && param.seriesData.get(candles);
+    if (!d) { r.textContent = ""; return; }
+    r.replaceChildren(); const add = (k, v) => { r.append(k + " "); r.append(el("b", null, v)); r.append("  "); };
+    add(hhmm(param.time), ""); add("O", fmt(d.open)); add("H", fmt(d.high)); add("L", fmt(d.low)); add("C", fmt(d.close));
+    const t = S.trade; if (t && t.entry != null && S.tab === "trade") {
+      const r1 = (t.side === "SHORT" ? t.entry - d.close : d.close - t.entry) / (t.risk || 1); add("open R", sgn(r1)); }
+  });
+}
+
+function barsFor(keys) {
+  const out = [];
+  keys.forEach(k => (DATA.bars[k] || []).forEach(b => out.push({ time: b[0], open: b[1], high: b[2], low: b[3], close: b[4] })));
+  out.sort((a, b) => a.time - b.time);
+  return out.filter((b, i) => i === 0 || b.time !== out[i - 1].time);
+}
+function sessionHiLo(bars, from, to) {
+  let hi = null, lo = null;
+  bars.forEach(b => { if (b.time >= from && b.time < to) { hi = hi == null ? b.high : Math.max(hi, b.high); lo = lo == null ? b.low : Math.min(lo, b.low); } });
+  return { hi, lo };
+}
+function nearest(bars, t) {
+  if (t == null || !bars.length) return null;
+  let best = null;
+  for (const b of bars) { if (b.time <= t) best = b.time; else break; }
+  return best ?? bars[0].time;
+}
+function clearOverlays() {
+  P.lines.forEach(s => P.chart.removeSeries(s)); P.lines = [];
+  P.priceLines.forEach(l => P.candles.removePriceLine(l)); P.priceLines = [];
+}
+function segment(from, to, price, color, title, style, width = 2) {
+  if (price == null || from == null || to == null) return;
+  const s = P.chart.addLineSeries({ color, lineWidth: width, lineStyle: style ?? LW.LineStyle.Solid, priceLineVisible: false,
+                                    lastValueVisible: true, title, crosshairMarkerVisible: false });
+  s.setData(from === to ? [{ time: from, value: price }] : [{ time: from, value: price }, { time: to, value: price }]);
+  P.lines.push(s);
+}
+function level(price, color, title) {
+  if (price == null) return;
+  P.priceLines.push(P.candles.createPriceLine({ price, color, lineWidth: 1, lineStyle: LW.LineStyle.Dashed, axisLabelVisible: true, title }));
+}
+
+const TRIAD = DATA.strategy === "triad930";      // triad: 8am range + leader; q3: session open, SMT partner, pivots
+const LAYERS = [["levels", TRIAD ? "TDO" : "TDO / session open"], ["bracket", "Entry / stop / target"],
+                ["hilo", TRIAD ? "8am range" : "Session high/low"],
+                ["markers", "Markers"], ["window", "Entry window"]];
+LAYERS.forEach(([k, label]) => { const b = el("button", "chip on", label); b.dataset.k = k;
+  b.onclick = () => { S.layers[k] = !S.layers[k]; b.classList.toggle("on", S.layers[k]); drawChart(true); }; $("layers").append(b); });
+const ZOOMS = [["window", "Window"], ["session", "Session"], ["trade", "Trade"], ["all", "All"]];
+ZOOMS.forEach(([k, label]) => { const b = el("button", "chip", label); b.onclick = () => zoom(k); $("zooms").append(b); });
+
+function zoom(kind) {
+  const t = S.trade; if (!P || !t) return;
+  const ts = P.chart.timeScale();
+  const ranges = { window: [t.window[0] - 20 * 60, t.window[1] + 25 * 60], session: [t.session[0], t.session[1]],
+                   trade: [Math.min(t.smt ?? t.signal, t.signal) - 25 * 60, (t.exit ?? t.signal) + 25 * 60] };
+  try { if (kind === "all") ts.fitContent(); else ts.setVisibleRange({ from: ranges[kind][0], to: ranges[kind][1] }); }
+  catch (e) { ts.fitContent(); }
+}
+
+function setLegend(items) {
+  const lg = $("legend"); lg.replaceChildren();
+  items.forEach(([color, label, h]) => { const s = el("span"); const sw = el("span", "sw"); sw.style.background = color;
+    if (h) sw.style.height = h; s.append(sw, label); lg.append(s); });
+}
+
+function drawChart(keepRange) {
+  const t = S.trade; if (!P || !t) return;
+  const ts = P.chart.timeScale();
+  const saved = keepRange ? ts.getVisibleRange() : null;
+  const partner = S.tab === "partner";
+  const bars = barsFor(partner ? t.partner_keys : t.keys);
+  P.bars = bars;
+  clearOverlays();
+  P.candles.setData(bars);
+  P.band.setData(S.layers.window ? bars.filter(b => b.time >= t.window[0] && b.time < t.window[1]).map(b => ({ time: b.time, value: 1 })) : []);
+  const short = t.side === "SHORT";
+  const end = t.exit ?? (bars.length ? bars[bars.length - 1].time : t.signal);
+  const hl = TRIAD && t.range ? sessionHiLo(bars, t.range[0], t.range[1]) : sessionHiLo(bars, t.session[0], t.signal + 60);
+  const hiloFrom = TRIAD && t.range ? t.range[0] : t.session[0];
+  const [hiName, loName] = TRIAD ? ["8am high", "8am low"] : ["sess hi", "sess lo"];
+  const m = [];
+  const mark = (time, o) => { const at = nearest(bars, time); if (at != null) m.push({ time: at, ...o }); };
+
+  if (!partner) {
+    $("chart-label").textContent = `${t.symbol} · ${t.day}`;
+    if (S.layers.bracket) {
+      segment(t.fill ?? t.signal, end, t.entry, C.info, "entry");
+      segment(t.signal, end, t.stop, C.bad, "stop");
+      segment(t.signal, end, t.target, C.good, "target");
+    }
+    if (S.layers.levels) { level(t.tdo, C.tdo, "TDO"); if (!TRIAD) level(t.session_open, C.so, "Session open"); }
+    if (S.layers.markers && t.pivot != null && t.pivot_price != null)
+      segment(t.pivot, t.signal, t.pivot_price, C.warn, "swing", LW.LineStyle.Dotted);
+    if (S.layers.hilo) { segment(hiloFrom, t.signal, hl.hi, C.hl, hiName, LW.LineStyle.Dotted, 1);
+                         segment(hiloFrom, t.signal, hl.lo, C.hl, loName, LW.LineStyle.Dotted, 1); }
+    if (S.layers.markers) {
+      mark(t.smt, { position: short ? "aboveBar" : "belowBar", color: C.warn, shape: "circle",
+                    text: TRIAD ? `${t.partner || "leader"} sweep` : "SMT" });
+      mark(t.pivot, { position: short ? "belowBar" : "aboveBar", color: C.warn, shape: "square", text: "pivot" });
+      mark(t.signal, { position: short ? "aboveBar" : "belowBar", color: C.info, shape: short ? "arrowDown" : "arrowUp", text: short ? "SHORT" : "LONG" });
+      mark(t.fill, { position: "inBar", color: C.info, shape: "circle", size: 0.6 });
+      if (t.exit != null) mark(t.exit, { position: (t.exit_reason === "target") === short ? "belowBar" : "aboveBar",
+        color: t.r > 0 ? C.good : C.bad, shape: "square", text: `${t.exit_reason} ${fmt(t.exit_price)} (${sgn(t.r)}R)` });
+    }
+    setLegend(TRIAD ? [[C.info, "Entry"], [C.bad, "Stop"], [C.good, "Target"], [C.tdo, "True Day Open"],
+               [C.hl, "8am high/low"], [C.warn, "Leader's 8am sweep"],
+               [dark ? "rgba(110,162,255,.35)" : "rgba(47,111,219,.3)", "9:30 window", "10px"]]
+      : [[C.info, "Entry"], [C.bad, "Stop"], [C.good, "Target"], [C.tdo, "True Day Open"], [C.so, "NY Session True Open"],
+               [C.hl, "Session high/low to signal"], [C.warn, "SMT · pivot · swing"],
+               [dark ? "rgba(110,162,255,.35)" : "rgba(47,111,219,.3)", "Entry window", "10px"]]);
+  } else {
+    $("chart-label").textContent = t.partner ? `${t.partner} · ${TRIAD ? "leader" : "SMT partner"} of ${t.symbol} · ${t.day}` : "No partner";
+    if (S.layers.hilo) { segment(hiloFrom, t.signal, hl.hi, C.hl, hiName, LW.LineStyle.Dotted, 1);
+                         segment(hiloFrom, t.signal, hl.lo, C.hl, loName, LW.LineStyle.Dotted, 1); }
+    if (S.layers.markers) {
+      mark(t.smt, { position: short ? "aboveBar" : "belowBar", color: C.warn, shape: "circle",
+                    text: TRIAD ? (short ? "took 8am high" : "took 8am low")
+                                : short ? "SMT: no new high here" : "SMT: no new low here" });
+      mark(t.signal, { position: short ? "aboveBar" : "belowBar", color: C.info, shape: short ? "arrowDown" : "arrowUp",
+                       text: `${t.symbol} ${short ? "SHORT" : "LONG"}` });
+    }
+    setLegend([[C.hl, TRIAD ? "Leader's 8am high/low" : "Partner session high/low to signal"],
+               [C.warn, TRIAD ? "Leader's 8am sweep" : "SMT bar"], [C.info, "Signal on " + t.symbol],
+               [dark ? "rgba(110,162,255,.35)" : "rgba(47,111,219,.3)", "Entry window", "10px"]]);
+  }
+  m.sort((a, b) => a.time - b.time);
+  P.candles.setMarkers(m);
+  // Apply the range after layout: a chart that was just un-hidden has no width yet
+  requestAnimationFrame(() => { if (saved) { try { ts.setVisibleRange(saved); } catch (e) { zoom("trade"); } } else zoom("trade"); });
+}
+
+// ---------------------------------------------------------------- details
+function showDetails(t) {
+  const d = $("details"); d.replaceChildren();
+  if (!t) { d.append(el("div", null, "No trades match the filters.")); return; }
+  const short = t.side === "SHORT";
+  const item = (k, v, cls) => { const x = el("div"); x.append(k + " "); x.append(el("b", cls || null, v)); d.append(x); };
+  const head = el("div"); head.append(el("span", "badge " + (short ? "b-short" : "b-long"), t.side), " ", t.symbol, " ", t.signal_label); d.append(head);
+  item("Entry", fmt(t.entry)); item("Stop", fmt(t.stop)); item("Target", fmt(t.target));
+  item("Risk/share", fmt(t.risk, 3)); item("Qty", t.qty.toLocaleString());
+  item("Exit", `${t.exit_reason} ${fmt(t.exit_price)} · ${t.exit_label}`);
+  item("Result", `${sgn(t.r)}R ($${fmt(t.pnl, 0)})`, t.r > 0 ? "pos" : "neg");
+  item("TDO", `${fmt(t.tdo)}${t.tdo_source ? " (" + t.tdo_source.replace(/_/g, " ") + ")" : ""}`);
+  if (TRIAD) { item("8am range", `${fmt(t.range_low)} – ${fmt(t.range_high)}`); item("Leader", t.partner || "—"); }
+  else item("Session open", fmt(t.session_open));
+  item("Window", `${hhmm(t.window[0])}–${hhmm(t.window[1])}`);
+}
+
+// ------------------------------------------------------------- performance
+function stats(ts) {
+  const n = ts.length, rs = ts.map(t => t.r ?? 0);
+  const wins = rs.filter(r => r > 0), losses = rs.filter(r => r <= 0);
+  let eq = 0, peak = 0, dd = 0, streak = 0, worstStreak = 0;
+  ts.forEach(t => { eq += t.r ?? 0; peak = Math.max(peak, eq); dd = Math.min(dd, eq - peak);
+    streak = (t.r ?? 0) <= 0 ? streak + 1 : 0; worstStreak = Math.max(worstStreak, streak); });
+  const gw = wins.reduce((a, b) => a + b, 0), gl = -losses.reduce((a, b) => a + b, 0);
+  return { n, win: n ? wins.length / n : null, avg: n ? eq / n : null, total: eq, pf: gl ? gw / gl : null, dd,
+           streak: worstStreak, best: n ? Math.max(...rs) : null, worst: n ? Math.min(...rs) : null,
+           pnl: ts.reduce((a, t) => a + (t.pnl ?? 0), 0) };
+}
+function byExit(ts) { return [...ts].sort((a, b) => (a.exit ?? a.signal) - (b.exit ?? b.signal)); }
+
+function renderPerf() {
+  const ts = byExit(S.visible), s = stats(ts);
+  const k = $("kpis"); k.replaceChildren();
+  [["Trades", s.n, 0], ["Win rate", s.win == null ? null : s.win * 100, 1, "%"], ["Avg R", s.avg, 2, "", true],
+   ["Total R", s.total, 1, "", true], ["Profit factor", s.pf, 2], ["Max drawdown", s.dd, 1, " R", true],
+   ["Worst losing streak", s.streak, 0], ["Best / worst", null], ["P&L", s.pnl, 0, "", true, "$"]].forEach(([name, v, d, suf, colored, money]) => {
+    const c = el("div", "kpi"); c.append(el("div", "k", name));
+    const val = name === "Best / worst" ? `${sgn(s.best)} / ${sgn(s.worst)}R`
+      : v == null ? "—" : money ? `${v < 0 ? "−" : "+"}$${fmt(Math.abs(v), d)}` : (colored ? sgn(v, d) : fmt(v, d)) + (suf || "");
+    c.append(el("div", "v" + (colored && v != null ? (v > 0 ? " pos" : v < 0 ? " neg" : "") : ""), val)); k.append(c);
+  });
+  drawEquity(ts); drawHist(ts); drawBySymbol(ts); drawBreakdowns(ts);
+}
+
+const NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, parent) { const e = document.createElementNS(NS, tag); Object.entries(attrs).forEach(([a, v]) => e.setAttribute(a, v)); if (parent) parent.append(e); return e; }
+function axisY(svg, y, lo, hi, W, H, pad, ticks = 5) {
+  for (let i = 0; i <= ticks; i++) { const v = lo + (hi - lo) * i / ticks, yy = y(v);
+    svgEl("line", { x1: pad, x2: W, y1: yy, y2: yy, stroke: C.line, "stroke-width": 1, "vector-effect": "non-scaling-stroke" }, svg);
+    const tx = svgEl("text", { x: 4, y: yy + 4, fill: C.muted, "font-size": 11 }, svg); tx.textContent = fmt(v, 0); }
+}
+function tip(evt, text) { const t = $("tip"); t.textContent = text; t.style.display = "block";
+  t.style.left = Math.min(evt.clientX + 12, innerWidth - 260) + "px"; t.style.top = evt.clientY + 12 + "px"; }
+function untip() { $("tip").style.display = "none"; }
+
+function drawEquity(ts) {
+  const svg = $("equity"); svg.replaceChildren();
+  const W = 1000, H = 260, pad = 36;
+  if (!ts.length) return;
+  const eq = []; let c = 0; ts.forEach(t => { c += t.r ?? 0; eq.push(c); });
+  const peaks = []; let p = 0; eq.forEach(v => { p = Math.max(p, v); peaks.push(p); });
+  const lo = Math.min(0, ...eq), hi = Math.max(0, ...eq) || 1;
+  const x = i => pad + (W - pad - 8) * (ts.length === 1 ? 0.5 : i / (ts.length - 1));
+  const y = v => 10 + (H - 24) * (1 - (v - lo) / (hi - lo || 1));
+  axisY(svg, y, lo, hi, W, H, pad);
+  svgEl("line", { x1: pad, x2: W, y1: y(0), y2: y(0), stroke: C.muted, "stroke-dasharray": "4 4", "vector-effect": "non-scaling-stroke" }, svg);
+  let area = `M${x(0)},${y(peaks[0])}`; peaks.forEach((v, i) => area += ` L${x(i)},${y(v)}`);
+  for (let i = eq.length - 1; i >= 0; i--) area += ` L${x(i)},${y(eq[i])}`;
+  svgEl("path", { d: area + " Z", fill: css("--bad-a"), stroke: "none" }, svg);
+  svgEl("path", { d: eq.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join(" "), fill: "none", stroke: C.info,
+                  "stroke-width": 2, "vector-effect": "non-scaling-stroke" }, svg);
+  ts.forEach((t, i) => {
+    const dot = svgEl("circle", { cx: x(i), cy: y(eq[i]), r: 3.2, fill: t.r > 0 ? C.good : C.bad, class: "pt" }, svg);
+    dot.onmousemove = e => tip(e, `${t.signal_label} ${t.symbol} ${t.side} · ${t.exit_reason} ${sgn(t.r)}R · cum ${sgn(eq[i], 1)}R`);
+    dot.onmouseleave = untip; dot.onclick = () => { untip(); openTrade(t.id, "trade"); };
+  });
+}
+
+function drawHist(ts) {
+  const svg = $("hist"); svg.replaceChildren();
+  const W = 500, H = 200, pad = 30, lo = -3, hi = 7, step = 0.5, nb = (hi - lo) / step;
+  const counts = new Array(nb).fill(0);
+  ts.forEach(t => { const r = Math.max(lo, Math.min(hi - 1e-9, t.r ?? 0)); counts[Math.floor((r - lo) / step)]++; });
+  const max = Math.max(1, ...counts), bw = (W - pad) / nb;
+  const y = v => 8 + (H - 30) * (1 - v / max);
+  axisY(svg, y, 0, max, W, H, pad, 4);
+  counts.forEach((n, i) => { const from = lo + i * step;
+    const r = svgEl("rect", { x: pad + i * bw + 1, y: y(n), width: bw - 2, height: Math.max(0, (H - 22) - y(n)),
+                              fill: from >= 0 ? C.good : C.bad, opacity: .85 }, svg);
+    r.onmousemove = e => tip(e, `${fmt(from, 1)}R to ${fmt(from + step, 1)}R: ${n} trades`); r.onmouseleave = untip; });
+  [-3, -1, 0, 1, 3, 5, 7].forEach(v => { const tx = svgEl("text", { x: pad + (v - lo) / step * bw - 6, y: H - 6, fill: C.muted, "font-size": 11 }, svg); tx.textContent = v + "R"; });
+}
+
+function drawBySymbol(ts) {
+  const svg = $("bysym"); svg.replaceChildren();
+  const W = 500, H = 200, pad = 30;
+  const syms = [...new Set(ts.map(t => t.symbol))].sort();
+  if (!ts.length) return;
+  const curves = syms.map(s => { let c = 0; return ts.map(t => (c += t.symbol === s ? (t.r ?? 0) : 0)); });
+  const all = curves.flat(); const lo = Math.min(0, ...all), hi = Math.max(1, ...all);
+  const x = i => pad + (W - pad - 60) * (ts.length === 1 ? 0.5 : i / (ts.length - 1));
+  const y = v => 8 + (H - 20) * (1 - (v - lo) / (hi - lo || 1));
+  axisY(svg, y, lo, hi, W, H, pad, 4);
+  curves.forEach((cv, k) => svgEl("path", { d: cv.map((v, i) => `${i ? "L" : "M"}${x(i)},${y(v)}`).join(" "), fill: "none",
+                                             stroke: C.series[k % C.series.length], "stroke-width": 2 }, svg));
+  // End labels, pushed apart so they never overlap
+  const labels = curves.map((cv, k) => ({ k, y: y(cv[cv.length - 1]) + 4, v: cv[cv.length - 1] })).sort((a, b) => a.y - b.y);
+  labels.forEach((l, i) => { if (i && l.y - labels[i - 1].y < 13) l.y = labels[i - 1].y + 13; });
+  labels.forEach(l => { const tx = svgEl("text", { x: W - 56, y: l.y, fill: C.series[l.k % C.series.length], "font-size": 11, "font-weight": 600 }, svg);
+                        tx.textContent = `${syms[l.k]} ${sgn(l.v, 1)}`; });
+}
+
+function drawBreakdowns(ts) {
+  const box = $("breakdowns"); box.replaceChildren();
+  const groups = [["By symbol", t => t.symbol], ["By side", t => t.side], ["By exit", t => t.exit_reason],
+                  ["By entry minute (5-min bucket)", t => t.bucket], ["By weekday", t => t.weekday]];
+  const order = { weekday: WEEKDAYS };
+  groups.forEach(([title, key]) => {
+    const g = {}; ts.forEach(t => (g[key(t)] = g[key(t)] || []).push(t));
+    let keys = Object.keys(g).sort();
+    if (title === "By weekday") keys = WEEKDAYS.filter(d => g[d]);
+    const card = el("div", "card"); card.append(el("h3", null, title.toUpperCase()));
+    const tbl = el("table"); const hr = el("tr");
+    ["", "Trades", "Win %", "Avg R", "Total R", ""].forEach((h, i) => hr.append(el("th", i && i < 5 ? "r" : null, h)));
+    const th = el("thead"); th.append(hr); tbl.append(th);
+    const body = el("tbody"); const maxAbs = Math.max(1e-9, ...keys.map(k => Math.abs(stats(g[k]).total)));
+    keys.forEach(kk => { const s = stats(g[kk]); const tr = el("tr");
+      tr.append(el("td", null, kk), el("td", "r", s.n), el("td", "r", fmt(s.win * 100, 0)),
+                el("td", "r " + (s.avg > 0 ? "pos" : "neg"), sgn(s.avg)), el("td", "r " + (s.total > 0 ? "pos" : "neg"), sgn(s.total, 1)));
+      const bc = el("td"); const bar = el("span", "bar"); bar.style.width = Math.round(60 * Math.abs(s.total) / maxAbs) + "px";
+      bar.style.background = s.total >= 0 ? C.good : C.bad; bc.append(bar); tr.append(bc); body.append(tr); });
+    tbl.append(body); card.append(tbl); box.append(card);
+  });
+}
+
+// ------------------------------------------------------------- list & nav
+function filtered() {
+  const sym = $("f-symbol").value, out = $("f-outcome").value, side = $("f-side").value;
+  return DATA.trades.filter(t => (!sym || t.symbol === sym) && (!side || t.side === side) &&
+    (!out || (out === "other" ? !["stop", "target"].includes(t.exit_reason) : t.exit_reason === out)));
+}
+function renderList(keepId) {
+  S.visible = filtered();
+  const body = $("rows"); body.replaceChildren();
+  S.visible.forEach((t, i) => { const tr = el("tr"); tr.dataset.i = i;
+    [t.signal_label, t.symbol, t.side, t.exit_reason].forEach(v => tr.append(el("td", null, v)));
+    tr.append(el("td", "r " + (t.r > 0 ? "pos" : "neg"), sgn(t.r))); tr.onclick = () => select(i); body.append(tr); });
+  const s = stats(S.visible);
+  $("count").textContent = `${S.visible.length} of ${DATA.trades.length} trades · win ${fmt((s.win || 0) * 100, 1)}% · ${sgn(s.total, 1)}R`;
+  const sum = $("summary"); sum.replaceChildren();
+  [["Trades", s.n, 0], ["Win", (s.win || 0) * 100, 1, "%"], ["Avg", s.avg, 2, "R"], ["Total", s.total, 1, "R"]].forEach(([k, v, d, suf]) => {
+    const sp = el("span", "stat"); sp.append(k + " ", el("b", null, (d ? fmt(v, d) : v) + (suf || "")), "   "); sum.append(sp); });
+  const at = keepId != null ? S.visible.findIndex(t => t.id === keepId) : -1;
+  select(at >= 0 ? at : (S.visible.length ? 0 : -1), true);
+  if (S.tab === "perf") renderPerf();
+}
+function select(i, quiet) {
+  S.idx = i; S.trade = i >= 0 ? S.visible[i] : null;
+  document.querySelectorAll("#rows tr").forEach(tr => tr.classList.toggle("sel", Number(tr.dataset.i) === i));
+  const row = document.querySelector(`#rows tr[data-i="${i}"]`); if (row) row.scrollIntoView({ block: "nearest" });
+  showDetails(S.trade);
+  if (S.tab !== "perf" && S.chartShown) drawChart(false);
+  updateHash();
+}
+function openTrade(id, tab) {
+  ["f-symbol", "f-outcome", "f-side"].forEach(f => { if (!S.visible.some(t => t.id === id)) $(f).value = ""; });
+  if (!S.visible.some(t => t.id === id)) renderList(id);
+  setTab(tab || "trade");
+  select(S.visible.findIndex(t => t.id === id));
+}
+function setTab(tab) {
+  const toChart = tab !== "perf";
+  const keep = S.chartShown && S.tab !== "perf" && toChart;   // trade <-> partner keeps the zoom
+  S.tab = tab;
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
+  $("chart-view").classList.toggle("on", toChart); $("perf").classList.toggle("on", !toChart);
+  if (S.trade) {
+    $("tab-trade").firstChild.textContent = `Trade chart · ${S.trade.symbol}`;
+    $("partner-tab-label").textContent = `${TRIAD ? "Leader" : "Partner"} chart · ${S.trade.partner || "—"}`;
+  }
+  if (toChart) { drawChart(keep); S.chartShown = true; } else renderPerf();
+  updateHash();
+}
+function updateHash() {
+  const h = `#${S.tab}${S.trade ? "&t=" + S.trade.id : ""}`;
+  if (location.hash !== h) history.replaceState(null, "", h);
+}
+
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => setTab(b.dataset.tab));
+["f-symbol", "f-outcome", "f-side"].forEach(id => $(id).onchange = () => renderList(S.trade && S.trade.id));
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT") return;
+  if (e.key === "1") setTab("trade"); if (e.key === "2") setTab("partner"); if (e.key === "3") setTab("perf");
+  if (["ArrowDown", "ArrowRight", "j"].includes(e.key) && S.idx < S.visible.length - 1) { select(S.idx + 1); e.preventDefault(); }
+  if (["ArrowUp", "ArrowLeft", "k"].includes(e.key) && S.idx > 0) { select(S.idx - 1); e.preventDefault(); }
+});
+
+if (DATA && DATA.trades) {
+  const h = new URLSearchParams(location.hash.slice(1).replace(/^(trade|partner|perf)/, "tab=$1"));
+  const tab = ["trade", "partner", "perf"].includes(h.get("tab")) ? h.get("tab") : "trade";
+  S.tab = tab;
+  renderList();
+  if (h.get("t") != null) { const id = Number(h.get("t")); const i = S.visible.findIndex(t => t.id === id); if (i >= 0) select(i, true); }
+  setTab(tab);
+}
+</script>
+</body>
+</html>

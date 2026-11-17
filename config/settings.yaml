@@ -138,6 +138,9 @@ monitoring:
   log_retention_days: 30           # ...and delete rotated files after 30 days
   status_file: logs/status.json    # written every bar; read by `python main.py --dashboard`
   dashboard_refresh_seconds: 5
+  web_dashboard:                   # python main.py --web-dashboard
+    host: 127.0.0.1                # local only; 0.0.0.0 would expose it to your network
+    port: 8050
   alerts:
     console: true
     email_enabled: false

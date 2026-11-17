@@ -175,9 +175,14 @@ class AlpacaClient:
 
         return self._call(lambda c: c.get_calendar(GetCalendarRequest(start=start, end=end)), what="get_calendar")
 
+    def get_asset(self, symbol: str) -> Dict[str, Any]:
+        a = self._call(lambda c: c.get_asset(symbol), what="get_asset")
+        return {"symbol": symbol, "tradable": bool(a.tradable), "shortable": bool(getattr(a, "shortable", False)),
+                "easy_to_borrow": bool(getattr(a, "easy_to_borrow", False)),
+                "fractionable": bool(getattr(a, "fractionable", False))}
+
     def is_tradable(self, symbol: str) -> bool:
-        asset = self._call(lambda c: c.get_asset(symbol), what="get_asset")
-        return bool(asset.tradable)
+        return self.get_asset(symbol)["tradable"]
 
     # ------------------------------------------------------------- positions
     def get_positions(self) -> List[Dict[str, Any]]:

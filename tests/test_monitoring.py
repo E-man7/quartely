@@ -30,13 +30,15 @@ def _lines(path):
 def test_log_channels_and_context(log_dir):
     set_context(regime="BULL", probability=0.72, equity=105_230.0, positions={"SPY": 190}, daily_pnl=340.0)
     logging.getLogger("broker.order_executor").info("order submitted", extra={"symbol": "SPY"})
+    logging.getLogger("broker.alpaca_client").info("stream connecting")        # connection noise: main.log only
     logging.getLogger("monitoring.alerts").warning("alert", extra={"event": "regime_change"})
     logging.getLogger("core.hmm_engine").info("regime change confirmed")
     logging.getLogger("core.risk_manager").info("risk modification")
     for h in logging.getLogger().handlers:
         h.flush()
     main = _lines(log_dir / "main.log")
-    assert [r["msg"] for r in main] == ["order submitted", "alert", "regime change confirmed", "risk modification"]
+    assert [r["msg"] for r in main] == ["order submitted", "stream connecting", "alert", "regime change confirmed",
+                                        "risk modification"]
     assert all(r["regime"] == "BULL" and r["equity"] == 105_230.0 and r["daily_pnl"] == 340.0 for r in main)
     assert [r["msg"] for r in _lines(log_dir / "trades.log")] == ["order submitted"]
     assert [r["msg"] for r in _lines(log_dir / "alerts.log")] == ["alert"]
@@ -120,3 +122,34 @@ def test_status_file_roundtrip_and_staleness(tmp_path):
     assert read_status(tmp_path / "missing.json") == {}
     stale = mark_stale(read_status(path), now=datetime.now() + timedelta(hours=1))
     assert stale["system"]["data_ok"] is False and "stale" in stale["updated"]
+
+
+# ------------------------------------------------------------ web dashboard
+def test_web_dashboard_serves_page_and_status(tmp_path):
+    import threading
+    import urllib.error
+    import urllib.request
+
+    from monitoring.web_dashboard import make_server
+
+    status_file = tmp_path / "status.json"
+    server = make_server(status_file, port=0)                  # any free port, 127.0.0.1 only
+    assert server.server_address[0] == "127.0.0.1"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        page = urllib.request.urlopen(base + "/").read().decode()
+        assert "<title>Quartely Trader</title>" in page and "/api/status" in page
+        empty = json.loads(urllib.request.urlopen(base + "/api/status").read())
+        assert empty["status"] == {} and empty["history"] == []
+        write_status(status_file, STATUS)
+        data = json.loads(urllib.request.urlopen(base + "/api/status").read())
+        assert data["status"]["regime"]["label"] == "BULL" and data["history"][-1][1] == 105_230.0
+        urllib.request.urlopen(base + "/api/status")              # same update: no duplicate sample
+        assert len(json.loads(urllib.request.urlopen(base + "/api/status").read())["history"]) == 1
+        with pytest.raises(urllib.error.HTTPError) as err:
+            urllib.request.urlopen(base + "/../config/settings.yaml")
+        assert err.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
